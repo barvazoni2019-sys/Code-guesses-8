@@ -25,6 +25,7 @@ class JsonLeadRepository:
                     customer_name=item["customer_name"],
                     channel=Channel(item["channel"]),
                     created_at=datetime.fromisoformat(item["created_at"]),
+                    tenant_id=item.get("tenant_id", "default"),
                     last_response_at=datetime.fromisoformat(item["last_response_at"])
                     if item.get("last_response_at")
                     else None,

@@ -28,6 +28,7 @@ class Lead:
     customer_name: str
     channel: Channel
     created_at: datetime
+    tenant_id: str = "default"
     last_response_at: datetime | None = None
     status: LeadStatus = LeadStatus.new
     quote_value_ils: float = 0

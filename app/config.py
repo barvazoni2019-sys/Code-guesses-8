@@ -28,6 +28,7 @@ class Settings:
     require_api_key: bool = os.getenv("REQUIRE_API_KEY", "false").lower() == "true"
     api_keys_raw: str = os.getenv("API_KEYS", "")
     api_key_roles_raw: str = os.getenv("API_KEY_ROLES", "")  # format: key1:admin,key2:agent
+    api_key_tenants_raw: str = os.getenv("API_KEY_TENANTS", "")  # format: key1:tenantA,key2:tenantB
     rate_limit_per_minute: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
     def integration_status(self) -> dict[str, bool]:
@@ -58,4 +59,20 @@ class Settings:
             role = role.strip().lower()
             if key and role:
                 result[key] = role
+        return result
+
+    def api_key_tenants(self) -> dict[str, str]:
+        if not self.api_key_tenants_raw.strip():
+            return {}
+
+        result: dict[str, str] = {}
+        for pair in self.api_key_tenants_raw.split(","):
+            pair = pair.strip()
+            if not pair or ":" not in pair:
+                continue
+            key, tenant = pair.split(":", 1)
+            key = key.strip()
+            tenant = tenant.strip()
+            if key and tenant:
+                result[key] = tenant
         return result

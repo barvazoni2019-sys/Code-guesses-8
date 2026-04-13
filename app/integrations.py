@@ -29,13 +29,14 @@ def source_to_channel(source: str) -> Channel:
     return mapping.get(normalized, Channel.website_form)
 
 
-def event_to_lead(event: InboundEvent) -> Lead:
+def event_to_lead(event: InboundEvent, tenant_id: str = "default") -> Lead:
     """Convert inbound events from channels to canonical Lead model."""
     return Lead(
         lead_id=f"{event.source}-{event.external_id}",
         customer_name=event.customer_name,
         channel=source_to_channel(event.source),
         created_at=event.timestamp,
+        tenant_id=tenant_id,
         last_response_at=None,
         status=LeadStatus.new,
         quote_value_ils=event.estimated_value_ils,

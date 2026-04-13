@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app.security import ApiKeyAuth, RateLimiter, RoleAuthorizer
+from app.security import ApiKeyAuth, RateLimiter, RoleAuthorizer, TenantAuthorizer
 
 
 def test_api_key_auth() -> None:
@@ -27,3 +27,11 @@ def test_rate_limiter_window() -> None:
     assert limiter.allow("id", now=now + timedelta(seconds=1)) is True
     assert limiter.allow("id", now=now + timedelta(seconds=2)) is False
     assert limiter.allow("id", now=now + timedelta(seconds=61)) is True
+
+
+def test_tenant_authorizer() -> None:
+    tenants = TenantAuthorizer({"k1": "clinic-a"})
+    assert tenants.tenant_for_key("k1") == "clinic-a"
+    assert tenants.tenant_for_key("missing") == "default"
+    assert tenants.within_scope("clinic-a", "clinic-a") is True
+    assert tenants.within_scope("clinic-a", "clinic-b") is False

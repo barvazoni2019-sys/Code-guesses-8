@@ -73,6 +73,12 @@ A working backend prototype for your concept: **"AI שמוצא כסף אבוד �
 
 ## Security (enabled now)
 
+## Tenant Scoping (enabled now)
+
+- API keys can map to tenants via `API_KEY_TENANTS`
+- Example: `API_KEY_TENANTS=admin-key:clinic-a,viewer-key:clinic-b`
+- Data endpoints (`/leads`, `/analyze`, `/dashboard`, etc.) now operate on the caller tenant scope.
+
 ## RBAC (enabled now)
 
 - API keys can map to roles via `API_KEY_ROLES`
@@ -111,6 +117,7 @@ OPENAI_API_KEY=
 REQUIRE_API_KEY=false
 API_KEYS=
 API_KEY_ROLES=
+API_KEY_TENANTS=
 RATE_LIMIT_PER_MINUTE=60
 ```
 

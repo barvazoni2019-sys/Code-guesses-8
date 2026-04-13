@@ -16,7 +16,7 @@ from .integrations import InboundEvent, event_to_lead
 from .models import Channel, Lead, LeadStatus
 from .orchestrator import RevenueOrchestrator
 from .storage import JsonLeadRepository
-from .security import ApiKeyAuth, RateLimiter, RoleAuthorizer
+from .security import ApiKeyAuth, RateLimiter, RoleAuthorizer, TenantAuthorizer
 
 engine = RevenueLeakEngine()
 orchestrator = RevenueOrchestrator(engine)
@@ -28,6 +28,7 @@ ig_connector = InstagramConnector(settings)
 email_connector = EmailConnector(settings)
 auth = ApiKeyAuth(settings.api_keys())
 role_authorizer = RoleAuthorizer(settings.api_key_roles())
+tenant_authorizer = TenantAuthorizer(settings.api_key_tenants())
 rate_limiter = RateLimiter(max_requests=settings.rate_limit_per_minute, window_seconds=60)
 audit_logger = AuditLogger()
 
@@ -41,6 +42,7 @@ def _parse_lead(item: dict[str, Any]) -> Lead:
         customer_name=item["customer_name"],
         channel=Channel(item["channel"]),
         created_at=datetime.fromisoformat(item["created_at"]),
+        tenant_id=item.get("tenant_id", "default"),
         last_response_at=datetime.fromisoformat(item["last_response_at"]) if item.get("last_response_at") else None,
         status=LeadStatus(item.get("status", "new")),
         quote_value_ils=float(item.get("quote_value_ils", 0)),
@@ -55,8 +57,8 @@ def _parse_leads(items: list[dict[str, Any]]) -> list[Lead]:
 
 
 def _upsert_lead(existing: list[Lead], incoming: Lead) -> list[Lead]:
-    by_id = {lead.lead_id: lead for lead in existing}
-    by_id[incoming.lead_id] = incoming
+    by_id = {(lead.tenant_id, lead.lead_id): lead for lead in existing}
+    by_id[(incoming.tenant_id, incoming.lead_id)] = incoming
     return list(by_id.values())
 
 
@@ -91,25 +93,26 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             raise ValueError("invalid_json")
 
-    def _enforce_security(self, method: str, path: str) -> tuple[bool, dict | None, int | None, str]:
+    def _enforce_security(self, method: str, path: str) -> tuple[bool, dict | None, int | None, str, str]:
         api_key = self.headers.get("X-API-Key")
 
         if settings.require_api_key and not auth.is_authorized(api_key):
-            return False, {"error": "unauthorized"}, 401, "anonymous"
+            return False, {"error": "unauthorized"}, 401, "anonymous", "default"
 
         role = role_authorizer.role_for_key(api_key)
+        tenant = tenant_authorizer.tenant_for_key(api_key)
         if not role_authorizer.is_allowed(role, method, path):
-            return False, {"error": "forbidden", "role": role}, 403, role
+            return False, {"error": "forbidden", "role": role}, 403, role, tenant
 
         identity = api_key or self.client_address[0]
         if not rate_limiter.allow(identity):
-            return False, {"error": "rate_limited"}, 429, role
+            return False, {"error": "rate_limited"}, 429, role, tenant
 
-        return True, None, None, role
+        return True, None, None, role, tenant
 
     def do_GET(self) -> None:  # noqa: N802
         request_id = uuid.uuid4().hex
-        ok, sec_body, sec_code, role = self._enforce_security("GET", self.path)
+        ok, sec_body, sec_code, role, tenant = self._enforce_security("GET", self.path)
         if not ok and self.path != "/health":
             return self._json_response(sec_body or {"error": "security"}, sec_code or 400, request_id=request_id)
 
@@ -117,10 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_response({"status": "ok"}, request_id=request_id)
 
         if self.path == "/integration-status":
-            return self._json_response({"env": settings.app_env, "integrations": settings.integration_status(), "security": {"require_api_key": settings.require_api_key, "rate_limit_per_minute": settings.rate_limit_per_minute, "role": role}}, request_id=request_id)
+            return self._json_response({"env": settings.app_env, "integrations": settings.integration_status(), "security": {"require_api_key": settings.require_api_key, "rate_limit_per_minute": settings.rate_limit_per_minute, "role": role, "tenant": tenant}}, request_id=request_id)
 
         if self.path == "/leads":
-            leads = [asdict(lead) for lead in repo.load()]
+            leads = [asdict(lead) for lead in repo.load() if lead.tenant_id == tenant]
             return self._json_response(leads, request_id=request_id)
 
         if self.path == "/audit/recent":
@@ -135,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._json_response({"error": "invalid_json"}, 400, request_id=request_id)
 
-        ok, sec_body, sec_code, role = self._enforce_security("POST", self.path)
+        ok, sec_body, sec_code, role, tenant = self._enforce_security("POST", self.path)
         if not ok:
             return self._json_response(sec_body or {"error": "security"}, sec_code or 400, request_id=request_id)
 
@@ -154,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                     estimated_value_ils=float(payload.get("estimated_value_ils", 0)),
                 )
                 current = repo.load()
-                merged = _upsert_lead(current, event_to_lead(event))
+                merged = _upsert_lead(current, event_to_lead(event, tenant_id=tenant))
                 repo.save(merged)
                 return self._json_response({"status": "ingested", "leads_count": len(merged)}, request_id=request_id)
 
@@ -165,11 +168,18 @@ class Handler(BaseHTTPRequestHandler):
 
             if self.path == "/leads/import":
                 leads = _parse_leads(payload.get("leads", []))
+                for lead in leads:
+                    lead.tenant_id = tenant
                 repo.save(leads)
                 return self._json_response({"status": "saved", "count": len(leads)}, request_id=request_id)
 
             leads_payload = payload.get("leads")
-            leads = _parse_leads(leads_payload) if leads_payload else repo.load()
+            if leads_payload:
+                leads = _parse_leads(leads_payload)
+                for lead in leads:
+                    lead.tenant_id = tenant
+            else:
+                leads = [lead for lead in repo.load() if lead.tenant_id == tenant]
             now = datetime.fromisoformat(payload["now"]) if payload.get("now") else None
 
             if self.path == "/send-preview":

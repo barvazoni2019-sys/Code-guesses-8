@@ -41,6 +41,19 @@ class RoleAuthorizer:
         return False
 
 
+
+
+@dataclass(slots=True)
+class TenantAuthorizer:
+    key_tenants: dict[str, str] = field(default_factory=dict)
+
+    def tenant_for_key(self, api_key: str | None) -> str:
+        if not api_key:
+            return "default"
+        return self.key_tenants.get(api_key, "default")
+
+    def within_scope(self, tenant: str, target_tenant: str) -> bool:
+        return tenant == target_tenant
 @dataclass(slots=True)
 class RateLimiter:
     max_requests: int = 60
