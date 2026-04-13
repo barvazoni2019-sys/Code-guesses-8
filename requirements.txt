@@ -1,0 +1,2 @@
+# No external runtime dependencies required for MVP.
+# (Uses Python standard library only.)
